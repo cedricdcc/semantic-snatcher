@@ -4,7 +4,7 @@ a deno project that will extract triples and a object URI from a given source UR
 
 Here’s a structured, step-by-step plan that can serve as a foundation for both a UML and sequence diagram.
 
-### Step-by-Step Plan for UML Diagram
+### Step-by-Step Plan for the semantic snatching
 
 #### 1. **Initialize Function**
 
