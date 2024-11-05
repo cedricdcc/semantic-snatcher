@@ -9,86 +9,81 @@ a deno project that will extract triples and a object URI from a given source UR
 - Input: A URI that will be used to retrieve triples.
 - Output: A triplestore and the subject URI that describes the object (if found).
 
-#### 2. **Retrieve Initial Triples**
+#### 2. **Perform Preflight `HEAD` Request**
 
-- **2.1 Send HTTP GET Request with Accept Headers:**
-  - **First Accept Header:** `text/turtle`
-  - **Second Accept Header:** `application/ld+json`
-  - **Third Accept Header:** `text/html`
-- **2.2** For each response, check:
-  - **If `text/turtle` or `application/ld+json` is successful** (contains triples):
+- **Send a `HEAD` request** to the URI to check available `Accept` headers.
+- **If available headers are returned**, note them for subsequent GET requests.
+- **If no headers are returned**, use default Accept headers:
+  - `text/html`, `text/turtle`, `application/ld+json`.
+
+#### 3. **Retrieve Initial Triples (with GET requests)**
+
+- **3.1 Send HTTP GET Request with determined Accept headers:**
+  - For each header type, send a `GET` request to try and retrieve triples.
+  - **If a response with `text/turtle` or `application/ld+json` is successful**:
     - Parse the content and add it to the triplestore.
     - **Exit this step** if triples are found.
   - **If `text/html` is used**:
     - Parse for embedded `application/ld+json` or `text/turtle` in the HTML.
-    - **Look for JSON-LD content in `<script>` tags**:
-      - `<script>` tag with `type="application/ld+json"`.
-      - **Or** `<link>` tag with `rel="describedby"` and `type="application/ld+json"`.
-    - If found, **fetch content**, parse JSON-LD, and add it to the triplestore.
-  - **If no triples are found in all Accept headers**, exit the function without a triplestore.
+    - Look for JSON-LD content in `<script>` tags or `<link>` tags.
+    - If found, fetch content, parse JSON-LD, and add it to the triplestore.
+  - **If no triples are found** in all Accept headers, exit the function without a triplestore.
 
-#### 3. **Check if Triples Are Found**
+#### 4. **Check if Triples Are Found**
 
-- If the triplestore is empty after Step 2, **terminate** the function.
+- If the triplestore is empty, terminate the function.
 - If triples are found, proceed to find the `subject URI` within the triplestore.
 
-#### 4. **Query Triplestore for Subject URI**
+#### 5. **Query Triplestore for Subject URI**
 
-- **Primary Query:** Use the original URI as the subject in a query.
-- If triples are returned from this query:
-  - **Check** if any triple has the predicate `schema:describes`.
-  - If found:
-    - **Use the object of this triple** as the new subject URI.
-    - **Exit** this step.
-- **Secondary Query (Redirected URI Check):**
-  - If the URI experienced redirects during Step 2, use the **final redirected URI** as the subject in a query.
-  - Repeat the check for `schema:describes` predicate.
-  - If found, **use this URI as the subject URI** and **exit** this step.
-
-#### 5. **Fallback Query with URI as Object**
-
-- If no triples were found in Step 4, **use the URI as the object** in a query.
-- If triples are found, use the **subject of this query as the subject URI**.
-- **Check the predicate** used to find the subject in this query for additional logic if needed.
+- Use the original URI as the subject in a query.
+- If triples are returned, check for `schema:describes`.
+- If no results, query the triplestore using the final redirected URI if applicable.
 
 #### 6. **Return Results**
 
-- Return the populated `triplestore` and the `subject URI` that describes the object.
+- Return the populated triplestore and the determined `subject URI`.
 
 ```mermaid
 flowchart TD
-    A[Start: Initialize with URI] --> B[Send GET Request with Accept Headers]
-    B --> C{Response Content}
-    C -->|text/turtle or application/ld+json| D[Parse and Store Triples]
-    C -->|text/html| E[Parse HTML for Embedded Triples]
-    E --> F{Embedded JSON-LD or Turtle Found?}
-    F -->|Yes| D
-    F -->|No| G[Check Next Accept Header]
-    G --> B
+    A[Start: Initialize with URI] --> B[Send HEAD Request to Check Accept Headers]
+    B --> C{Headers Returned?}
+    C -->|Yes| D[Use Returned Headers for GET Requests]
+    C -->|No| E[Use Default Headers &lpar;text/turtle, application/ld+json, text/html&rpar;]
 
-    D --> H{Triplestore Populated?}
-    H -->|No| I[Return No Triples Found]
-    H -->|Yes| J[Query Triplestore for Subject URI]
+    E --> F[Send GET Request with Accept Headers]
+    D --> F
 
-    J --> K{Triples Found for Original URI?}
-    K -->|Yes| L[Check for schema:describes Predicate]
-    L -->|Yes| M[Return Triplestore and Object as Subject URI]
-    L -->|No| N[Use Original URI as Describing Subject URI]
-    K -->|No| O{Was URI Redirected?}
+    F --> G{Response Content}
+    G -->|text/turtle or application/ld+json| H[Parse and Store Triples]
+    G -->|text/html| I[Parse HTML for Embedded Triples]
+    I --> J{Embedded JSON-LD or Turtle Found?}
+    J -->|Yes| H
+    J -->|No| K[Check Next Accept Header]
+    K --> F
 
-    O -->|Yes| P[Query with Final Redirected URI]
-    P --> Q{Triples Found?}
-    Q -->|Yes| R[Check for schema:describes Predicate]
-    R -->|Yes| M
-    R -->|No| S[Query Triplestore with Original URI as Object]
+    H --> L{Triplestore Populated?}
+    L -->|No| M[Return No Triples Found]
+    L -->|Yes| N[Query Triplestore for Subject URI]
 
-    Q -->|No| S
-    O -->|No| S
-    S --> T{Triples Found for URI as Object?}
-    T -->|Yes| U[Use Subject of Triple as Subject URI]
-    U --> M
-    T -->|No| I
+    N --> O{Triples Found for Original URI?}
+    O -->|Yes| P[Check for schema:describes Predicate]
+    P -->|Yes| Q[Return Triplestore and Object as Subject URI]
+    P -->|No| R[Use Original URI as Describing Subject URI]
+    O -->|No| S{Was URI Redirected?}
 
+    S -->|Yes| T[Query with Final Redirected URI]
+    T --> U{Triples Found?}
+    U -->|Yes| V[Check for schema:describes Predicate]
+    V -->|Yes| Q
+    V -->|No| W[Query Triplestore with Original URI as Object]
+
+    U -->|No| W
+    S -->|No| W
+    W --> X{Triples Found for URI as Object?}
+    X -->|Yes| Y[Use Subject of Triple as Subject URI]
+    Y --> Q
+    X -->|No| M
 ```
 
 ---
@@ -114,63 +109,115 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant Function
+    actor User
+    participant SemanticSnatcher
     participant HTTPService as HTTP Service
     participant HTMLParser as HTML Parser
     participant Triplestore
 
-    User->>Function: Call function with initial URI
-    loop Accept Headers
-        Function->>HTTPService: Send GET request with Accept headers (text/turtle, application/ld+json, text/html)
-        alt Triple response found
-            HTTPService-->>Function: Return triples in turtle or JSON-LD
-            Function->>Triplestore: Parse and store triples
+    User->>SemanticSnatcher: call getTriples(uri)
+
+    SemanticSnatcher->>HTTPService: _getAvailableHeaders(uri) - HEAD request
+    alt Headers Returned
+        HTTPService-->>SemanticSnatcher: Available Accept headers
+    else No Headers Returned
+        Note right of SemanticSnatcher: Use default headers (text/turtle, application/ld+json, text/html)
+    end
+
+    loop for each Accept Header
+        SemanticSnatcher->>HTTPService: _fetchWithHeaders(uri, header) - GET request
+        alt Turtle or JSON-LD response
+            HTTPService-->>SemanticSnatcher: Returns RDF data
+            SemanticSnatcher->>Triplestore: _parseAndStoreTriples(data, format)
         else HTML Content
-            HTTPService-->>Function: Return HTML content
-            Function->>HTMLParser: Parse HTML for embedded JSON-LD or Turtle
-            alt Embedded JSON-LD found
-                HTMLParser-->>Function: Return JSON-LD
-                Function->>Triplestore: Parse and store triples
-            else No embedded content found
-                HTMLParser-->>Function: No triples found
+            HTTPService-->>SemanticSnatcher: Returns HTML content
+            SemanticSnatcher->>HTMLParser: _extractTriplesFromHTML(html)
+            alt JSON-LD found in HTML
+                HTMLParser-->>SemanticSnatcher: JSON-LD data
+                SemanticSnatcher->>Triplestore: Store extracted triples
+            else No embedded JSON-LD
+                HTMLParser-->>SemanticSnatcher: No embedded JSON-LD
             end
-        else No triples found
-            HTTPService-->>Function: No content found
+        else No data returned
+            HTTPService-->>SemanticSnatcher: No content found
         end
     end
 
-    alt Triplestore is empty
-        Function-->>User: Return empty result (No triples found)
-    else Triples found in Triplestore
-        Function->>Triplestore: Query for subject URI using original URI
-        alt Triples found with schema:describes predicate
-            Triplestore-->>Function: Return object as subject URI
-            Function-->>User: Return triplestore and subject URI
-        else No triples found
-            alt Final redirected URI available
-                Function->>Triplestore: Query using redirected URI as subject
-                alt schema:describes found
-                    Triplestore-->>Function: Return object as subject URI
-                    Function-->>User: Return triplestore and subject URI
-                else No triples found
-                    Function->>Triplestore: Query using URI as object
-                    alt Triples found
-                        Triplestore-->>Function: Return subject as subject URI
-                        Function-->>User: Return triplestore and subject URI
-                    else No triples found
-                        Function-->>User: Return triplestore (No describing subject found)
-                    end
-                end
-            else Query URI as object
-                Function->>Triplestore: Query using URI as object
-                alt Triples found
-                    Triplestore-->>Function: Return subject as subject URI
-                    Function-->>User: Return triplestore and subject URI
-                else No triples found
-                    Function-->>User: Return triplestore (No describing subject found)
-                end
+    alt Triplestore empty
+        SemanticSnatcher-->>User: Return empty result (No triples found)
+    else Triples found
+        SemanticSnatcher->>Triplestore: _findSubjectUri(uri) - query triplestore
+        alt Describes Predicate Found
+            Triplestore-->>SemanticSnatcher: Object URI as subject
+            SemanticSnatcher-->>User: Return triplestore and subject URI
+        else No matching subject
+            SemanticSnatcher->>Triplestore: Check if URI is used as an object
+            alt URI found as object
+                Triplestore-->>SemanticSnatcher: Subject URI
+                SemanticSnatcher-->>User: Return triplestore and subject URI
+            else No URI matches found
+                SemanticSnatcher-->>User: Return triplestore (no describing subject)
             end
         end
     end
+```
+
+---
+
+# Class Diagram Description for the Semantic Snatcher
+
+```mermaid
+classDiagram
+    class SemanticSnatcher {
+        - triplestore: rdf.Store
+        - n3Parser: N3Parser
+        + constructor()
+        + getTriples(uri: string): Promise<TripleResult>
+        - _getAvailableHeaders(uri: string): Promise<string[]>
+        - _fetchWithHeaders(uri: string, acceptHeader: string): Promise<string | null>
+        - _parseAndStoreTriples(data: string, format: string): Promise<void>
+        - _extractTriplesFromHTML(html: string): Promise<void>
+        - _findSubjectUri(uri: string): Promise<string | null>
+    }
+
+    SemanticSnatcher --> HTTPService : uses
+    SemanticSnatcher --> HTMLParser : uses
+    SemanticSnatcher --> Triplestore : manages
+
+    class HTTPService {
+        + fetch(uri: string, options: RequestInit): Promise<Response>
+    }
+
+    class HTMLParser {
+        + parseFromString(html: string, mimeType: string): Document
+        + querySelectorAll(selector: string): NodeList
+    }
+
+    class Triplestore {
+        + add(quad: Quad): void
+        + match(subject: Node, predicate: Node, object: Node): Array<Quad>
+        + length: number
+    }
+
+    class N3Parser {
+        + parse(data: string, callback: (error: Error | null, quad: Quad | null) => void): void
+    }
+
+    SemanticSnatcher *-- Triplestore : stores
+    SemanticSnatcher *-- N3Parser : parses
+
+    class jsonld {
+        + toRDF(jsonldData: object, options: FormatOptions): Promise<string>
+    }
+
+    SemanticSnatcher --> jsonld : uses
+
+    class TripleResult {
+        + triplestore: rdf.Store
+        + subjectUri: string | null
+    }
+
+    class FormatOptions {
+        + format: string
+    }
 ```
