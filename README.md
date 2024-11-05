@@ -111,26 +111,26 @@ flowchart TD
 sequenceDiagram
     actor User
     participant SemanticSnatcher
-    participant HTTPService as HTTP Service
+    participant UserAgent
     participant HTMLParser as HTML Parser
     participant Triplestore
 
     User->>SemanticSnatcher: call getTriples(uri)
 
-    SemanticSnatcher->>HTTPService: _getAvailableHeaders(uri) - HEAD request
+    SemanticSnatcher->>UserAgent: _getAvailableHeaders(uri) - HEAD request
     alt Headers Returned
-        HTTPService-->>SemanticSnatcher: Available Accept headers
+        UserAgent-->>SemanticSnatcher: Available Accept headers
     else No Headers Returned
         Note right of SemanticSnatcher: Use default headers (text/turtle, application/ld+json, text/html)
     end
 
     loop for each Accept Header
-        SemanticSnatcher->>HTTPService: _fetchWithHeaders(uri, header) - GET request
+        SemanticSnatcher->>UserAgent: _fetchWithHeaders(uri, header) - GET request
         alt Turtle or JSON-LD response
-            HTTPService-->>SemanticSnatcher: Returns RDF data
+            UserAgent-->>SemanticSnatcher: Returns RDF data
             SemanticSnatcher->>Triplestore: _parseAndStoreTriples(data, format)
         else HTML Content
-            HTTPService-->>SemanticSnatcher: Returns HTML content
+            UserAgent-->>SemanticSnatcher: Returns HTML content
             SemanticSnatcher->>HTMLParser: _extractTriplesFromHTML(html)
             alt JSON-LD found in HTML
                 HTMLParser-->>SemanticSnatcher: JSON-LD data
@@ -139,7 +139,7 @@ sequenceDiagram
                 HTMLParser-->>SemanticSnatcher: No embedded JSON-LD
             end
         else No data returned
-            HTTPService-->>SemanticSnatcher: No content found
+            UserAgent-->>SemanticSnatcher: No content found
         end
     end
 
@@ -171,7 +171,8 @@ classDiagram
     class SemanticSnatcher {
         - triplestore: rdf.Store
         - n3Parser: N3Parser
-        + constructor()
+        - userAgent: UserAgent
+        + constructor(userAgent: UserAgent)
         + getTriples(uri: string): Promise<TripleResult>
         - _getAvailableHeaders(uri: string): Promise<string[]>
         - _fetchWithHeaders(uri: string, acceptHeader: string): Promise<string | null>
@@ -180,12 +181,16 @@ classDiagram
         - _findSubjectUri(uri: string): Promise<string | null>
     }
 
-    SemanticSnatcher --> HTTPService : uses
+    SemanticSnatcher --> UserAgent : uses
     SemanticSnatcher --> HTMLParser : uses
     SemanticSnatcher --> Triplestore : manages
 
-    class HTTPService {
-        + fetch(uri: string, options: RequestInit): Promise<Response>
+    class UserAgent {
+        - retryCount: number
+        - proxyUrl: string | null
+        - userAgent: string
+        + constructor(retryCount: number, proxyUrl: string | null, userAgent: string)
+        + fetch(uri: string, options: RequestInit): Promise<Response | null>
     }
 
     class HTMLParser {
