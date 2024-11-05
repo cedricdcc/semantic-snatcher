@@ -114,6 +114,9 @@ sequenceDiagram
     participant UserAgent
     participant HTMLParser as HTML Parser
     participant Triplestore
+    participant Worker1 as Web Service Worker 1
+    participant Worker2 as Web Service Worker 2
+    participant Worker3 as Web Service Worker 3
 
     User->>SemanticSnatcher: call getTriples(uri)
 
@@ -124,23 +127,15 @@ sequenceDiagram
         Note right of SemanticSnatcher: Use default headers (text/turtle, application/ld+json, text/html)
     end
 
-    loop for each Accept Header
-        SemanticSnatcher->>UserAgent: _fetchWithHeaders(uri, header) - GET request
-        alt Turtle or JSON-LD response
-            UserAgent-->>SemanticSnatcher: Returns RDF data
-            SemanticSnatcher->>Triplestore: _parseAndStoreTriples(data, format)
-        else HTML Content
-            UserAgent-->>SemanticSnatcher: Returns HTML content
-            SemanticSnatcher->>HTMLParser: _extractTriplesFromHTML(html)
-            alt JSON-LD found in HTML
-                HTMLParser-->>SemanticSnatcher: JSON-LD data
-                SemanticSnatcher->>Triplestore: Store extracted triples
-            else No embedded JSON-LD
-                HTMLParser-->>SemanticSnatcher: No embedded JSON-LD
-            end
-        else No data returned
-            UserAgent-->>SemanticSnatcher: No content found
-        end
+    par Fetch with Headers
+        SemanticSnatcher->>Worker1: _fetchWithHeaders(uri, header1) - GET request
+        SemanticSnatcher->>Worker2: _fetchWithHeaders(uri, header2) - GET request
+        SemanticSnatcher->>Worker3: _fetchWithHeaders(uri, header3) - GET request
+    and Worker1 finds triples
+        Worker1-->>SemanticSnatcher: Returns RDF data
+        SemanticSnatcher->>Triplestore: _parseAndStoreTriples(data, format)
+        Worker2--xSemanticSnatcher: Stop fetching
+        Worker3--xSemanticSnatcher: Stop fetching
     end
 
     alt Triplestore empty
@@ -225,4 +220,106 @@ classDiagram
     class FormatOptions {
         + format: string
     }
+```
+
+---
+
+### Pseudocode
+
+```typescript
+class SemanticSnatcher {
+  private triplestore: rdf.Store;
+  private n3Parser: N3Parser;
+  private userAgent: UserAgent;
+
+  constructor(userAgent: UserAgent) {
+    this.userAgent = userAgent;
+    this.triplestore = new rdf.Store();
+    this.n3Parser = new N3Parser();
+  }
+
+  async getTriples(uri: string): Promise<TripleResult> {
+    const headers = await this._getAvailableHeaders(uri);
+    const defaultHeaders = ["text/html", "text/turtle", "application/ld+json"];
+    const acceptHeaders = headers.length ? headers : defaultHeaders;
+
+    const workers = acceptHeaders.map((header) =>
+      this._fetchWithHeaders(uri, header).catch(() => null)
+    );
+    const result = await Promise.race(workers.filter((p) => p !== null));
+
+    if (result) {
+      await this._parseAndStoreTriples(result.data, result.format);
+    }
+
+    if (this.triplestore.length === 0) {
+      return { triplestore: this.triplestore, subjectUri: null };
+    }
+
+    const subjectUri = await this._findSubjectUri(uri);
+    return { triplestore: this.triplestore, subjectUri };
+  }
+
+  private async _getAvailableHeaders(uri: string): Promise<string[]> {
+    // Send HEAD request to get available headers
+    const response = await this.userAgent.fetch(uri, { method: "HEAD" });
+    if (response && response.headers.has("Accept")) {
+      return response.headers.get("Accept").split(",");
+    }
+    return [];
+  }
+
+  private async _fetchWithHeaders(
+    uri: string,
+    acceptHeader: string
+  ): Promise<{ data: string; format: string } | null> {
+    const response = await this.userAgent.fetch(uri, {
+      headers: { Accept: acceptHeader },
+    });
+    if (response && response.ok) {
+      const data = await response.text();
+      return { data, format: acceptHeader };
+    }
+    return null;
+  }
+
+  private async _parseAndStoreTriples(
+    data: string,
+    format: string
+  ): Promise<void> {
+    if (format === "text/turtle" || format === "application/ld+json") {
+      this.n3Parser.parse(data, (error, quad) => {
+        if (quad) {
+          this.triplestore.add(quad);
+        }
+      });
+    } else if (format === "text/html") {
+      await this._extractTriplesFromHTML(data);
+    }
+  }
+
+  private async _extractTriplesFromHTML(html: string): Promise<void> {
+    const doc = new HTMLParser().parseFromString(html, "text/html");
+    const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+    for (const script of scripts) {
+      const jsonldData = JSON.parse(script.textContent);
+      const rdfData = await jsonld.toRDF(jsonldData, {
+        format: "application/n-quads",
+      });
+      this.n3Parser.parse(rdfData, (error, quad) => {
+        if (quad) {
+          this.triplestore.add(quad);
+        }
+      });
+    }
+  }
+
+  private async _findSubjectUri(uri: string): Promise<string | null> {
+    const triples = this.triplestore.match(uri, "schema:describes", null);
+    if (triples.length > 0) {
+      return triples[0].object.value;
+    }
+    return null;
+  }
+}
 ```
