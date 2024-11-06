@@ -323,3 +323,7 @@ class SemanticSnatcher {
   }
 }
 ```
+
+### flowdiagram with drawio
+
+![Semantic Snatcher Diagram](/assets/semantic_snatcher.drawio.svg)
